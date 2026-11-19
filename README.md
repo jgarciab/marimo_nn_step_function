@@ -4,10 +4,13 @@ Interactive Marimo WASM app for teaching neural-network depth, width, training
 time, and overfitting. Fit a network to a fixed step function and compare
 training and validation error as the fitted curve changes across epochs.
 
-## Live app
+## Browser app
 
-**[Open the app](https://javier.science/marimo_nn_step_function/)**
+[App URL](https://javier.science/marimo_nn_step_function/) (available after
+the one-time Pages setup below).
 
+For the first deployment, open **Settings → Pages → Build and deployment**,
+set **Source** to **GitHub Actions**, then rerun the deployment workflow.
 GitHub Actions checks the app, builds the WASM bundle, and deploys it to GitHub
 Pages on every push to `main`. It runs entirely in the browser, with no server
 or external data.
