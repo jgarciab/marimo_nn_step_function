@@ -56,8 +56,15 @@ def controls(mo):
     learning_rate = mo.ui.dropdown([0.0001, 0.001, 0.005, 0.01, 0.05, 0.1],
                                    value=0.005, label="Learning rate (Adam)")
     fit_button = mo.ui.run_button(label="Fit network", kind="success", full_width=True)
+    main_fit_button = mo.ui.run_button(label="Fit network", kind="success")
     return (activation, centre, depth, epochs, fit_button, learning_rate,
-            new_sample, noise, sample_size, width)
+            main_fit_button, new_sample, noise, sample_size, width)
+
+
+@app.cell
+def main_action(main_fit_button):
+    main_fit_button
+    return
 
 
 @app.cell
@@ -71,7 +78,7 @@ def sidebar(activation, centre, depth, epochs, fit_button, learning_rate, mo,
         fit_button,
         mo.md("Each epoch uses the full training sample. The output is linear. "
               "Validation uses 500 independent observations."),
-    ])
+    ], width="360px")
     return
 
 
@@ -132,7 +139,7 @@ def sample_preview(plot_image, plt, truth, x_grid, x_train, y_train):
 @app.cell
 def snapshot_helper(np):
     def choose_snapshots(history):
-        """Keep the validation minimum, a substantial dip/rebound, and the end."""
+        """Keep the minimum, an early rapid decrease and its recovery, and the end."""
         epochs, loss = history[:, 0].astype(int), history[:, 2]
         selected = {}
 
@@ -142,23 +149,27 @@ def snapshot_helper(np):
 
         add(int(np.argmin(loss)), "Minimum")
         add(len(loss) - 1, "Final")
-        # Smooth only for detecting a clear dip followed by a rebound and recovery.
+        # Smooth only to locate the early transition on the log-epoch plot.
         # The minimum and plotted losses still use the unsmoothed measurements.
-        smooth = np.convolve(np.pad(loss, (3, 3), mode="edge"), np.ones(7) / 7, mode="valid")
-        threshold = max(0.02 * np.ptp(smooth), 0.03 * np.median(smooth), 1e-8)
-        best_pair, best_prominence = None, threshold
-        for peak in range(2, len(loss) - 2):
-            if not (smooth[peak] >= smooth[peak - 1] and smooth[peak] > smooth[peak + 1]):
-                continue
-            dip = 1 + int(np.argmin(smooth[1:peak]))
-            recovery = np.min(smooth[peak + 1:])
-            prominence = min(smooth[peak] - smooth[dip], smooth[peak] - recovery)
-            if prominence > best_prominence:
-                best_pair, best_prominence = (dip, peak), prominence
-        if best_pair is not None:
-            for index, label, extreme in zip(best_pair, ["Dip", "Rebound"], [np.argmin, np.argmax]):
-                lo, hi = max(1, index - 3), min(len(loss) - 1, index + 4)
-                add(lo + int(extreme(loss[lo:hi])), label)
+        early_limit = min(250, max(25, int(epochs[-1] * 0.1)))
+        early_count = int(np.searchsorted(epochs, early_limit, side="right"))
+        if early_count >= 10:
+            early_loss = loss[:early_count]
+            smooth = np.convolve(np.pad(early_loss, (2, 2), mode="edge"),
+                                 np.ones(5) / 5, mode="valid")
+            speed = -np.gradient(smooth, np.log(epochs[:early_count]))
+            # Locate the steepest early fall, then its onset and settling point.
+            peak = 2 + int(np.argmax(speed[2:-2]))
+            dip = peak
+            while dip > 1 and speed[dip - 1] >= 0.5 * speed[peak]:
+                dip -= 1
+            rebound = next((i for i in range(peak + 1, early_count - 2)
+                            if np.all(speed[i:i + 3] <= 0.3 * speed[peak])), None)
+            threshold = max(0.03 * np.median(early_loss), 1e-8)
+            if (speed[peak] > 0 and rebound is not None
+                    and early_loss[dip] - early_loss[rebound] >= threshold):
+                add(dip, "Dip")
+                add(rebound, "Rebound")
         # Missing or overlapping landmarks are filled with well-spaced epochs.
         log_epochs = np.log(epochs)
         while len(selected) < min(4, len(epochs)):
@@ -257,9 +268,10 @@ def network_helpers(choose_snapshots, np):
 
 
 @app.cell
-def fit(activation, depth, epochs, fit_button, learning_rate, mo, train_network,
+def fit(activation, depth, epochs, fit_button, learning_rate, main_fit_button, mo, train_network,
         width, x_grid, x_train, x_validation, y_train, y_validation):
-    mo.stop(not fit_button.value, mo.md("*Inspect the sample, then click Fit network.*"))
+    mo.stop(not (fit_button.value or main_fit_button.value),
+            mo.md("*Inspect the sample, then click Fit network.*"))
     with mo.status.progress_bar(total=epochs.value, title="Fitting network",
                                 show_rate=False, remove_on_exit=True) as _bar:
         def _progress(epoch, total):
@@ -315,7 +327,9 @@ def results(mo, noise, np, plot_image, plt, result, truth, x_grid, x_train, y_tr
               "The dashed line is the noise variance; error on a finite sample can fall below it."),
         mo.md("### Watch the fitted curve"), plot_image(_fits, "Fitted curves at four epochs"),
         mo.md("Grey = training points · Orange = fitted curve · Dashed = true mean. "
-              "Panels follow epoch order. If there is no clear dip and rebound, "
+              "Panels follow epoch order. Dip marks the start of a rapid early decrease; "
+              "rebound marks the subsequent slowing or recovery, even without an increase. "
+              "If this early transition is absent, "
               "the extra panels show other stages of training. "
               "\n\n**Try it:** use linear activation, add layers, or train for longer. "
               "When does a better training fit stop improving validation error?"),

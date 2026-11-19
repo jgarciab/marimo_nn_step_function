@@ -26,13 +26,15 @@ sh run.sh
 
 Choose depth, width, training sample size, noise SD, epochs, Adam learning rate,
 activation, and the step centre (0 or 1). Inspect the sample in the left sidebar,
-directly below **New sample**, before clicking
-**Fit network**. The results show training/validation MSE and fitted curves at
+directly below **New sample**, before clicking **Fit network** in the sidebar
+or main panel. Both buttons fit the same network. The results show training/validation MSE and fitted curves at
 four epochs in one row, ordered chronologically. The panels include the lowest
-recorded validation error, a clear dip and subsequent rebound if present, and
+recorded validation error, an early dip and subsequent rebound if present, and
 the final epoch. Other well-spaced epochs fill missing or overlapping landmarks.
-Dip/rebound detection uses a smoothed validation curve and requires a substantial
-rise followed by recovery; the minimum uses the original recorded errors.
+The dip marks the onset of a rapid early loss decrease; the rebound marks its
+subsequent slowing or recovery and does not require an increase. Detection uses
+a smoothed validation curve within the first 10% of training (at least 25 and
+at most 250 epochs). The minimum uses the original recorded errors.
 Changing settings waits for another click before fitting.
 **New sample** draws another training sample.
 
@@ -48,6 +50,15 @@ between hidden layers, zero initial biases, and a linear output. Errors are
 recorded at up to 400 log-spaced epochs; predictions at these checkpoints allow
 the four snapshot epochs to be selected after fitting. All requested
 epochs are trained. Large networks and long runs take longer to fit.
+
+## Backend
+
+- **NumPy** implements the forward pass, backpropagation, and full-batch Adam.
+- **Matplotlib** draws the sample, error curves, and fitted curves as PNG images.
+- **marimo** provides the reactive interface and the two fit buttons.
+- **Pyodide/WebAssembly** runs Python in the browser export.
+
+The app does not use TensorFlow, Keras, or PyTorch.
 
 ## Files
 

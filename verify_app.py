@@ -28,14 +28,32 @@ class StepChecks(unittest.TestCase):
         self.assertLess(sidebar.index("New sample"), sidebar.index("data:image/png;base64,"))
         self.assertLess(sidebar.index("data:image/png;base64,"), sidebar.index("Network"))
         self.assertIn("Fit network", html)
+        self.assertIn("360px", sidebar)
+        self.assertIn("Fit network", html.split("</marimo-sidebar>", 1)[0])
+        self.assertEqual(html.count("<marimo-button ") , 3)  # New sample and two Fit buttons.
 
-    def test_snapshots_find_dip_rebound_and_minimum_in_epoch_order(self):
-        epochs = np.arange(1, 101)
-        loss = np.interp(epochs, [1, 15, 35, 70, 100], [0.6, 0.25, 0.45, 0.15, 0.25])
+    def test_early_drop_and_recovery_do_not_require_a_loss_increase(self):
+        epochs = np.unique(np.rint(np.geomspace(1, 3000, 400))).astype(int)
+        loss = (0.6 - 0.3 / (1 + (20 / epochs) ** 7)
+                - 0.08 * (1 - np.exp(-epochs / 800)) + 0.03 * (epochs / 3000) ** 2)
         history = np.c_[epochs, loss, loss]
         labels = self.defs["choose_snapshots"](history)
-        self.assertEqual(list(labels), [15, 35, 70, 100])
-        self.assertEqual(list(labels.values()), ["Dip", "Rebound", "Minimum", "Final"])
+        dip = next(epoch for epoch, label in labels.items() if label == "Dip")
+        rebound = next(epoch for epoch, label in labels.items() if label == "Rebound")
+        self.assertLess(dip, 20)
+        self.assertGreater(rebound, 20)
+        self.assertLessEqual(rebound, 250)
+        self.assertLess(loss[np.searchsorted(epochs, rebound)], loss[np.searchsorted(epochs, dip)])
+        self.assertEqual(list(labels), sorted(labels))
+        self.assertIn(int(epochs[np.argmin(loss)]), labels)
+        self.assertEqual(labels[3000], "Final")
+
+    def test_late_dips_are_not_selected_as_early_landmarks(self):
+        epochs = np.unique(np.rint(np.geomspace(1, 3000, 400))).astype(int)
+        loss = np.interp(epochs, [1, 250, 1000, 1500, 2500, 3000],
+                        [0.6, 0.6, 0.3, 0.45, 0.2, 0.3])
+        labels = self.defs["choose_snapshots"](np.c_[epochs, loss, loss])
+        self.assertFalse(any("Dip" in label or "Rebound" in label for label in labels.values()))
 
     def test_monotone_and_noisy_curves_do_not_invent_dips(self):
         epochs = np.arange(1, 101)
@@ -112,13 +130,16 @@ class StepChecks(unittest.TestCase):
     def test_results_cells_execute(self):
         d = self.defs
         controls = ["activation", "centre", "depth", "epochs", "fit_button",
-                    "learning_rate", "new_sample", "noise", "sample_size", "width"]
+                    "learning_rate", "main_fit_button", "new_sample", "noise", "sample_size", "width"]
         # Simulate the button press and execute the actual training/display cells.
-        d["fit_button"]._value = True
-        try:
-            outputs, fitted_defs = app.run(defs={name: d[name] for name in controls})
-        finally:
-            d["fit_button"]._value = False
+        for button in ["fit_button", "main_fit_button"]:
+            with self.subTest(button=button):
+                d[button]._value = True
+                try:
+                    outputs, fitted_defs = app.run(defs={name: d[name] for name in controls})
+                finally:
+                    d[button]._value = False
+                self.assertIn("result", fitted_defs)
         self.assertIn("result", fitted_defs)
         self.assertEqual(fitted_defs["result"]["history"][-1, 0], 3000)
         html = "".join(getattr(output, "text", "") for output in outputs)
