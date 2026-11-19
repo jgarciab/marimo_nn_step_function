@@ -32,39 +32,13 @@ class StepChecks(unittest.TestCase):
         self.assertIn("Fit network", html.split("</marimo-sidebar>", 1)[0])
         self.assertEqual(html.count("<marimo-button ") , 3)  # New sample and two Fit buttons.
 
-    def test_early_drop_and_recovery_do_not_require_a_loss_increase(self):
-        epochs = np.unique(np.rint(np.geomspace(1, 3000, 400))).astype(int)
-        loss = (0.6 - 0.3 / (1 + (20 / epochs) ** 7)
-                - 0.08 * (1 - np.exp(-epochs / 800)) + 0.03 * (epochs / 3000) ** 2)
-        history = np.c_[epochs, loss, loss]
-        labels = self.defs["choose_snapshots"](history)
-        dip = next(epoch for epoch, label in labels.items() if label == "Dip")
-        rebound = next(epoch for epoch, label in labels.items() if label == "Rebound")
-        self.assertLess(dip, 20)
-        self.assertGreater(rebound, 20)
-        self.assertLessEqual(rebound, 250)
-        self.assertLess(loss[np.searchsorted(epochs, rebound)], loss[np.searchsorted(epochs, dip)])
-        self.assertEqual(list(labels), sorted(labels))
-        self.assertIn(int(epochs[np.argmin(loss)]), labels)
-        self.assertEqual(labels[3000], "Final")
-
-    def test_late_dips_are_not_selected_as_early_landmarks(self):
-        epochs = np.unique(np.rint(np.geomspace(1, 3000, 400))).astype(int)
-        loss = np.interp(epochs, [1, 250, 1000, 1500, 2500, 3000],
-                        [0.6, 0.6, 0.3, 0.45, 0.2, 0.3])
-        labels = self.defs["choose_snapshots"](np.c_[epochs, loss, loss])
-        self.assertFalse(any("Dip" in label or "Rebound" in label for label in labels.values()))
-
-    def test_monotone_and_noisy_curves_do_not_invent_dips(self):
-        epochs = np.arange(1, 101)
-        for loss in [np.linspace(1, 0.2, 100), np.full(100, 0.3),
-                     np.linspace(0.4, 0.2, 100) + 0.0005 * np.sin(epochs)]:
-            labels = self.defs["choose_snapshots"](np.c_[epochs, loss, loss])
-            self.assertEqual(len(labels), 4)
-            self.assertEqual(list(labels), sorted(labels))
-            self.assertIn(100, labels)
-            self.assertIn(int(epochs[np.argmin(loss)]), labels)
-            self.assertFalse(any("Dip" in label or "Rebound" in label for label in labels.values()))
+    def test_defaults_match_practical_19(self):
+        self.assertEqual(self.defs["width"].value, 1024)
+        self.assertEqual(self.defs["epochs"].value, 30000)
+        self.assertEqual(self.defs["depth"].value, 1)
+        self.assertEqual(self.defs["learning_rate"].value, 0.005)
+        self.assertEqual(self.defs["reference_sample"].shape, (50, 2))
+        self.assertEqual(self.defs["x_grid"].shape, (201, 1))
 
     def test_shift_preserves_problem(self):
         make = self.defs["make_sample"]
@@ -105,7 +79,7 @@ class StepChecks(unittest.TestCase):
         changed = d["train_network"](*args, d["y_validation"] + 10, d["x_grid"], **settings)
         self.assertEqual(len(result["curves"]), 4)
         self.assertEqual(list(result["curves"]), sorted(result["curves"]))
-        self.assertIn(int(result["history"][np.argmin(result["history"][:, 2]), 0]), result["curves"])
+        self.assertEqual(list(result["curves"]), [10, 24, 250, 300])
         self.assertIn(300, result["curves"])
         self.assertEqual(result["parameters"], 3 * 8 + 1 + 8 ** 2 + 8)
         self.assertTrue(np.isfinite(result["history"]).all())
@@ -131,7 +105,9 @@ class StepChecks(unittest.TestCase):
         d = self.defs
         controls = ["activation", "centre", "depth", "epochs", "fit_button",
                     "learning_rate", "main_fit_button", "new_sample", "noise", "sample_size", "width"]
-        # Simulate the button press and execute the actual training/display cells.
+        # Exercise both buttons with the default network over its early training.
+        original_epochs = d["epochs"]._value
+        d["epochs"]._value = 750
         for button in ["fit_button", "main_fit_button"]:
             with self.subTest(button=button):
                 d[button]._value = True
@@ -141,10 +117,19 @@ class StepChecks(unittest.TestCase):
                     d[button]._value = False
                 self.assertIn("result", fitted_defs)
         self.assertIn("result", fitted_defs)
-        self.assertEqual(fitted_defs["result"]["history"][-1, 0], 3000)
+        d["epochs"]._value = original_epochs
+        result = fitted_defs["result"]
+        self.assertEqual(result["history"][-1, 0], 750)
+        self.assertEqual(list(result["curves"]), [10, 24, 250, 750])
+        errors = {int(row[0]): row[2] for row in result["history"]}
+        # The original practical sample should exhibit the visible early fall/rise.
+        self.assertGreater(errors[24] - errors[10], 0.03)
+        self.assertGreater(errors[24] - errors[250], 0.03)
         html = "".join(getattr(output, "text", "") for output in outputs)
         self.assertIn("Follow the error", html)
         self.assertIn("Watch the fitted curve", html)
+        self.assertNotIn("Dip marks", html)
+        self.assertNotIn("Lowest recorded", html)
         self.assertEqual(html.count("data:image/png;base64,"), 3)
         images = re.findall(r"data:image/png;base64,([A-Za-z0-9+/=]+)", html)
         fits = Image.open(BytesIO(base64.b64decode(images[-1])))
